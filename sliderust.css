@@ -1,17 +1,17 @@
 body {
-    max-width: 1125px;
+    max-width: 80%;
 }
 
 h1 {
-    font-size: 70px;
+    font-size: 60px;
 }
 
 body, h5 {
-    font-size: 35px;
+    font-size: 24px;
 }
 
 pre {
-    font-size: 30px;
+    font-size: 24px;
 }
 
 section {
@@ -31,6 +31,10 @@ section.title-slide {
 code.language-text {
     /* Servo doesn't support pre-wrap yet */
     white-space: normal;
+}
+
+code.language-small {
+    font-size: 16px;
 }
 
 body, h1, h2, h3, h4, h5, h6, nav {
