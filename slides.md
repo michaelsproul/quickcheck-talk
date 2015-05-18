@@ -1,6 +1,6 @@
 % Testing and QuickCheck
 
-Rust 1.0 Testing Techniques
+*Rust 1.0 Testing Techniques*
 
 Michael Sproul
 

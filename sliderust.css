@@ -24,7 +24,6 @@ section.current {
 
 section.title-slide {
     text-align: center;
-    font-weight: bold;
     font-size: 150%;
 }
 
@@ -35,6 +34,10 @@ code.language-text {
 
 code.language-small {
     font-size: 16px;
+}
+
+pre.rust .doccomment {
+    color: #2D81FF;
 }
 
 body, h1, h2, h3, h4, h5, h6, nav {
