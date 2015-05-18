@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="generator" content="rustdoc">
+    <title>Testing and QuickCheck</title>
+
+    
+    <link rel="stylesheet" href="http://doc.rust-lang.org/rust.css">
+<link rel="stylesheet" href="sliderust.css">
+<script src="sliderust.js"></script>
+
+
+</head>
+<body class="rustdoc">
+    <!--[if lte IE 8]>
+    <div class="warning">
+        This old browser is unsupported and will most likely display funky
+        things.
+    </div>
+    <![endif]-->
+
+    
+    <h1 class="title">Testing and QuickCheck</h1>
+    <p><em>Rust 1.0 Testing Techniques</em></p>
+
+<p>Michael Sproul</p>
+
+<p>May 19, 2015</p>
+
+<h1 id="overview" class='section-header'><a
+                           href="#overview">Overview</a></h1>
+<ul>
+<li>Rust&#39;s built-in testing framework.</li>
+<li>Generating tests with QuickCheck.</li>
+</ul>
+
+<h1 id="how-to-write-tests" class='section-header'><a
+                           href="#how-to-write-tests">How to Write Tests</a></h1>
+<p>Mark tests with the <code>#[test]</code> <a href="http://doc.rust-lang.org/reference.html#attributes">attribute</a>.</p>
+
+<p>If the test function doesn&#39;t panic, it passes.</p>
+<pre id='rust-example-rendered' class='rust '>
+<span class='attribute'>#[<span class='ident'>test</span>]</span>
+<span class='kw'>fn</span> <span class='ident'>this_passes</span>() {}
+
+<span class='attribute'>#[<span class='ident'>test</span>]</span>
+<span class='kw'>fn</span> <span class='ident'>this_fails</span>() {
+    <span class='macro'>panic</span><span class='macro'>!</span>();
+}
+
+<span class='attribute'>#[<span class='ident'>test</span>]</span>
+<span class='kw'>fn</span> <span class='ident'>this_also_fails</span>() {
+    <span class='macro'>assert</span><span class='macro'>!</span>(<span class='boolval'>true</span>); <span class='comment'>// fine</span>
+    <span class='macro'>assert_eq</span><span class='macro'>!</span>(<span class='number'>2</span>, <span class='number'>5</span>); <span class='comment'>// uh oh</span>
+}
+</pre>
+
+<h1 id="compiling-a-test-harness" class='section-header'><a
+                           href="#compiling-a-test-harness">Compiling a Test Harness</a></h1>
+<p>Test binaries (harnesses) are compiled via Rust&#39;s <a href="http://doc.rust-lang.org/reference.html#conditional-compilation">conditional
+compilation</a> facilities. Minimal magic!</p>
+
+<pre><code class="language-shell">$ rustc --cfg test test.rs
+</code></pre>
+
+<p>Generally you just let Cargo take care of this.</p>
+<pre id='rust-example-rendered' class='rust '>
+$ <span class='ident'>cargo</span> <span class='ident'>test</span>
+</pre>
+
+<h1 id="test-output" class='section-header'><a
+                           href="#test-output">Test Output</a></h1>
+<pre><code class="language-small">$ cargo test
+running 3 tests
+test this_fails ... FAILED
+test this_also_fails ... FAILED
+test this_passes ... ok
+
+failures:
+
+---- this_fails stdout ----
+    thread &#39;this_fails&#39; panicked at &#39;explicit panic&#39;, test.rs:6
+
+---- this_also_fails stdout ----
+    thread &#39;this_also_fails&#39; panicked at &#39;assertion failed: `(left == right)` (left: `2`, right: `5`)&#39;, test.rs:12
+
+failures:
+    this_also_fails
+    this_fails
+
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured
+</code></pre>
+
+<h1 id="standard-testing-idioms" class='section-header'><a
+                           href="#standard-testing-idioms">Standard Testing Idioms</a></h1>
+<ul>
+<li>Take advantage of conditional compilation at the module level.</li>
+<li>Put tests in a separate file when they become numerous.</li>
+</ul>
+<pre id='rust-example-rendered' class='rust '>
+<span class='attribute'>#[<span class='ident'>cfg</span>(<span class='ident'>test</span>)]</span>
+<span class='kw'>mod</span> <span class='ident'>test</span> {
+    <span class='kw'>use</span> <span class='ident'>super</span>::<span class='op'>*</span>;
+
+    <span class='kw'>fn</span> <span class='ident'>make_something</span>() <span class='op'>-&gt;</span> <span class='ident'>Thing</span> { ... }
+
+    <span class='attribute'>#[<span class='ident'>test</span>]</span>
+    <span class='kw'>fn</span> <span class='ident'>test_one</span>() {
+        <span class='kw'>let</span> <span class='ident'>x</span> <span class='op'>=</span> <span class='ident'>make_something</span>();
+        ...
+    }
+}
+</pre>
+
+<h1 id="what-to-test?" class='section-header'><a
+                           href="#what-to-test?">What to Test?</a></h1>
+<p>Rust provides some pretty strong guarantees about memory safety, but there are
+plenty of other ways to go wrong.</p>
+
+<ul>
+<li>Code inside <code>unsafe</code> blocks can violate memory safety.</li>
+<li>Panicking crashes the whole program (via <code>unwrap</code>, array indexing, etc).</li>
+<li><strong>Logic Errors</strong>.</li>
+</ul>
+
+<h1 id="preventing-logic-errors" class='section-header'><a
+                           href="#preventing-logic-errors">Preventing Logic Errors</a></h1>
+<p>Programming is all about invariants.</p>
+
+<p><strong>Testing allows us to check invariants that can&#39;t be expressed in the type system.</strong></p>
+
+<h1 id="example:-lottery-scheduling" class='section-header'><a
+                           href="#example:-lottery-scheduling">Example: Lottery Scheduling</a></h1>
+<p><strong>Basic idea:</strong> Assign processes &quot;tickets&quot; in a lottery and schedule processes
+based on the outcome of the lottery. Reward good behaviour and penalise bad
+behaviour.</p>
+
+<p>Here we consider only the basic data structures.</p>
+<pre id='rust-example-rendered' class='rust '>
+<span class='kw'>pub</span> <span class='kw'>struct</span> <span class='ident'>Lottery</span> {
+    <span class='doccomment'>/// The total number of tickets.</span>
+    <span class='kw'>pub</span> <span class='ident'>total_tickets</span>: <span class='ident'>usize</span>,
+    <span class='doccomment'>/// The number of tickets each process has, such that process i&#39;s</span>
+    <span class='doccomment'>/// ticket count is tickets[i].</span>
+    <span class='kw'>pub</span> <span class='ident'>tickets</span>: <span class='ident'>Vec</span><span class='op'>&lt;</span><span class='ident'>usize</span><span class='op'>&gt;</span>
+}
+
+<span class='kw'>pub</span> <span class='kw'>enum</span> <span class='ident'>Transaction</span> {
+    <span class='doccomment'>/// Increase the given player&#39;s ticket count by 1.</span>
+    <span class='ident'>Reward</span>(<span class='ident'>usize</span>),
+    <span class='doccomment'>/// Decrease the given player&#39;s ticket count by 1.</span>
+    <span class='ident'>Penalise</span>(<span class='ident'>usize</span>)
+}
+</pre>
+
+<h1 id="lottery-scheduling-invariants" class='section-header'><a
+                           href="#lottery-scheduling-invariants">Lottery Scheduling Invariants</a></h1>
+<p>To keep scheduling somewhat fair we place an upper and lower limit on the
+number of tickets any process can have.</p>
+<pre id='rust-example-rendered' class='rust '>
+<span class='kw'>pub</span> <span class='kw'>const</span> <span class='ident'>MIN_TICKETS</span>: <span class='ident'>usize</span> <span class='op'>=</span> <span class='number'>1</span>;
+<span class='kw'>pub</span> <span class='kw'>const</span> <span class='ident'>MAX_TICKETS</span>: <span class='ident'>usize</span> <span class='op'>=</span> <span class='number'>50</span>;
+</pre>
+
+<ul>
+<li>∀t ∈ <code>tickets</code> : t ≥ <code>MIN_TICKETS</code> and t ≤ <code>MAX_TICKETS</code>.</li>
+<li><code>total_tickets</code> = sum(<code>tickets</code>).</li>
+</ul>
+
+<p>We&#39;d like to verify that these invariants are maintained for arbitrary
+sequences of transactions.</p>
+
+<h1 id="quickcheck" class='section-header'><a
+                           href="#quickcheck">QuickCheck</a></h1>
+<p>QuickCheck is a library that can generate random input to a function <strong>based on
+its type signature</strong>.</p>
+<pre id='rust-example-rendered' class='rust '>
+<span class='doccomment'>/// Claim that all vectors have even length...</span>
+<span class='kw'>fn</span> <span class='ident'>prop_even_length</span>(<span class='ident'>v</span>: <span class='ident'>Vec</span><span class='op'>&lt;</span><span class='ident'>u32</span><span class='op'>&gt;</span>) <span class='op'>-&gt;</span> <span class='ident'>bool</span> {
+    <span class='ident'>v</span>.<span class='ident'>len</span>() <span class='op'>%</span> <span class='number'>2</span> <span class='op'>==</span> <span class='number'>0</span>
+}
+</pre>
+
+<p>Given a &quot;property function&quot;, QuickCheck will generate input for it and check that it succeeds.</p>
+
+<p>If the function fails, QuickCheck can <strong>shrink</strong> the failing input to produce a minimal test case!</p>
+
+<p>In the case above, QuickCheck finds <code>[0]</code>.</p>
+
+<h1 id="testing-the-lottery-scheduler-with-quickcheck" class='section-header'><a
+                           href="#testing-the-lottery-scheduler-with-quickcheck">Testing the Lottery Scheduler with QuickCheck</a></h1>
+<p>Let&#39;s use QuickCheck to test the lottery scheduler.</p>
+
+<p><strong>Plan of attack</strong>: Generate random vectors of transactions and apply them.
+After the application of each transaction, check the integrity of the lottery
+using an invariant checking function.</p>
+<pre id='rust-example-rendered' class='rust '>
+<span class='doccomment'>/// Invariant checking function.</span>
+<span class='kw'>impl</span> <span class='ident'>Lottery</span> {
+    <span class='kw'>fn</span> <span class='ident'>is_valid</span>(<span class='kw-2'>&amp;</span><span class='self'>self</span>) <span class='op'>-&gt;</span> <span class='ident'>bool</span> {
+        <span class='comment'>// check sum and min/max bounds here.</span>
+    }
+}
+</pre>
+
+<h1 id="testing-the-lottery-scheduler-with-quickcheck-1" class='section-header'><a
+                           href="#testing-the-lottery-scheduler-with-quickcheck-1">Testing the Lottery Scheduler with QuickCheck</a></h1><pre id='rust-example-rendered' class='rust '>
+<span class='doccomment'>/// QuickCheck property function.</span>
+<span class='kw'>fn</span> <span class='ident'>lottery_check</span>(<span class='ident'>transactions</span>: <span class='ident'>Vec</span><span class='op'>&lt;</span><span class='ident'>Transaction</span><span class='op'>&gt;</span>) <span class='op'>-&gt;</span> <span class='ident'>bool</span> {
+    <span class='kw'>let</span> <span class='kw-2'>mut</span> <span class='ident'>lottery</span> <span class='op'>=</span> <span class='ident'>Lottery</span>::<span class='ident'>test_lottery</span>(<span class='number'>5</span>);
+
+    <span class='kw'>for</span> <span class='ident'>t</span> <span class='kw'>in</span> <span class='ident'>transactions</span> {
+        <span class='ident'>lottery</span>.<span class='ident'>apply_transaction</span>(<span class='ident'>t</span>);
+
+        <span class='kw'>if</span> <span class='op'>!</span><span class='ident'>lottery</span>.<span class='ident'>is_valid</span>() {
+            <span class='kw'>return</span> <span class='boolval'>false</span>;
+        }
+    }
+
+    <span class='boolval'>true</span>
+}
+</pre>
+
+<h1 id="generating-transactions" class='section-header'><a
+                           href="#generating-transactions">Generating Transactions</a></h1>
+<p>How does QuickCheck know how to generate a <code>Vec&lt;Transaction&gt;</code>? We have to tell it!</p>
+
+<p>The <code>Arbitrary</code> trait describes types which can be randomly generated given a
+random number generator.</p>
+<pre id='rust-example-rendered' class='rust '>
+<span class='kw'>impl</span> <span class='ident'>Arbitrary</span> <span class='kw'>for</span> <span class='ident'>Transaction</span> {
+    <span class='kw'>fn</span> <span class='ident'>arbitrary</span><span class='op'>&lt;</span><span class='ident'>G</span>: <span class='ident'>Gen</span><span class='op'>&gt;</span>(<span class='ident'>g</span>: <span class='kw-2'>&amp;</span><span class='kw-2'>mut</span> <span class='ident'>G</span>) <span class='op'>-&gt;</span> <span class='ident'>Transaction</span> {
+        <span class='kw'>let</span> <span class='ident'>reward</span> <span class='op'>=</span> <span class='ident'>g</span>.<span class='ident'>gen</span>();
+        <span class='kw'>let</span> <span class='ident'>player</span> <span class='op'>=</span> <span class='ident'>g</span>.<span class='ident'>gen</span>::<span class='op'>&lt;</span><span class='ident'>usize</span><span class='op'>&gt;</span>() <span class='op'>%</span> <span class='ident'>TEST_NUM_PLAYERS</span>;
+
+        <span class='kw'>if</span> <span class='ident'>reward</span> {
+            <span class='ident'>Reward</span>(<span class='ident'>player</span>)
+        } <span class='kw'>else</span> {
+            <span class='ident'>Penalise</span>(<span class='ident'>player</span>)
+        }
+    }
+}
+</pre>
+
+<p>QuickCheck can handle <code>Vec&lt;A: Arbitrary&gt;</code> out of the box.</p>
+
+<h1 id="running-quickcheck" class='section-header'><a
+                           href="#running-quickcheck">Running QuickCheck</a></h1>
+<p>QuickCheck integrates seamlessly with Rust&#39;s testing framework!</p>
+<pre id='rust-example-rendered' class='rust '>
+<span class='attribute'>#[<span class='ident'>test</span>]</span>
+<span class='kw'>fn</span> <span class='ident'>test_transactions</span>() {
+    <span class='doccomment'>/// QuickCheck property fn from before.</span>
+    <span class='kw'>fn</span> <span class='ident'>lottery_check</span>(<span class='ident'>transactions</span>: <span class='ident'>Vec</span><span class='op'>&lt;</span><span class='ident'>Transaction</span><span class='op'>&gt;</span>) <span class='op'>-&gt;</span> <span class='ident'>bool</span> { ... }
+
+    <span class='ident'>quickcheck</span>(<span class='ident'>lottery_check</span> <span class='kw'>as</span> <span class='kw'>fn</span>(<span class='ident'>Vec</span><span class='op'>&lt;</span><span class='ident'>Transaction</span><span class='op'>&gt;</span>) <span class='op'>-&gt;</span> <span class='ident'>bool</span>);
+}
+</pre>
+
+<p>Note: The function type cast should be unnecessary in a future version of QuickCheck.</p>
+
+<h1 id="it-works!" class='section-header'><a
+                           href="#it-works!">It Works!</a></h1>
+<p>In a lottery where every player has 5 tickets initially...</p>
+
+<p><strong>This is what happens if we forget to enforce the lower bound:</strong></p>
+<pre id='rust-example-rendered' class='rust '>
+[<span class='ident'>quickcheck</span>] <span class='ident'>TEST</span> <span class='ident'>FAILED</span>. <span class='ident'>Arguments</span>: ([<span class='ident'>Penalise</span>(<span class='number'>0</span>), <span class='ident'>Penalise</span>(<span class='number'>0</span>), <span class='ident'>Penalise</span>(<span class='number'>0</span>), <span class='ident'>Penalise</span>(<span class='number'>0</span>), <span class='ident'>Penalise</span>(<span class='number'>0</span>)])
+</pre>
+
+<p><strong>This is what happens if we forget to enforce the upper bound:</strong></p>
+<pre id='rust-example-rendered' class='rust '>
+[<span class='ident'>quickcheck</span>] <span class='ident'>TEST</span> <span class='ident'>FAILED</span>. <span class='ident'>Arguments</span>: ([<span class='ident'>Reward</span>(<span class='number'>4</span>), ... <span class='ident'>x46</span> ])
+</pre>
+
+<p>In both cases QuickCheck finds a minimal test case!</p>
+
+<h1 id="advanced-quickcheck" class='section-header'><a
+                           href="#advanced-quickcheck">Advanced QuickCheck</a></h1>
+<ul>
+<li>By default QuickCheck only checks relatively small inputs. To find the bug
+with the vector of length 46 I had to tweak some settings.</li>
+</ul>
+<pre id='rust-example-rendered' class='rust '>
+<span class='kw'>let</span> <span class='ident'>gen</span> <span class='op'>=</span> <span class='ident'>StdGen</span>::<span class='ident'>new</span>(<span class='ident'>rand</span>::<span class='ident'>thread_rng</span>(), <span class='number'>10_000</span>);
+<span class='kw'>let</span> <span class='kw-2'>mut</span> <span class='ident'>qc</span> <span class='op'>=</span> <span class='ident'>QuickCheck</span>::<span class='ident'>new</span>().<span class='ident'>gen</span>(<span class='ident'>gen</span>);
+</pre>
+
+<ul>
+<li>It&#39;s possible to filter the randomly generated input.</li>
+</ul>
+
+<h1 id="further-reading" class='section-header'><a
+                           href="#further-reading">Further Reading</a></h1>
+<p>The full code for the lottery scheduler example is up on Github:</p>
+
+<p><a href="https://github.com/michaelsproul/quickcheck-example">https://github.com/michaelsproul/quickcheck-example</a></p>
+
+<p>See also:</p>
+
+<ul>
+<li><a href="https://github.com/BurntSushi/quickcheck">QuickCheck Source and Documentation</a></li>
+<li><a href="http://doc.rust-lang.org/book/testing.html">Testing | The Rust Programming Language</a></li>
+</ul>
+
+<h1 id="thanks!" class='section-header'><a
+                           href="#thanks!">Thanks!</a></h1>
+    <script type="text/javascript">
+        window.playgroundUrl = "";
+    </script>
+    
+</body>
+</html>
